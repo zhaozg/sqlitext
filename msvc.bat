@@ -1,0 +1,1 @@
+cl -DSQLITE_HAS_CODEC  -DSQLITE_TEMP_STORE=2 /Fesqlite.exe amalgamation.c src/shell.c -Ie:\work\openssl\1.0.2\include e:\work\openssl\1.0.2\lib\libeay32.lib kernel32.lib advapi32.lib gdi32.lib user32.lib
