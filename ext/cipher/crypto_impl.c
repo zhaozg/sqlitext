@@ -486,8 +486,11 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
 
-  c_ctx->provider->set_cipher(c_ctx->provider_ctx, cipher_name);
-
+  rc = c_ctx->provider->set_cipher(c_ctx->provider_ctx, cipher_name);
+  if(rc != SQLITE_OK){
+    sqlcipher_codec_ctx_set_error(ctx, rc);
+    return rc;
+  }
   c_ctx->key_sz = c_ctx->provider->get_key_sz(c_ctx->provider_ctx);
   c_ctx->iv_sz = c_ctx->provider->get_iv_sz(c_ctx->provider_ctx);
   c_ctx->block_sz = c_ctx->provider->get_block_sz(c_ctx->provider_ctx);
@@ -882,12 +885,12 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
       ctx->need_kdf_salt = 0;
     }
-    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
+    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, c_ctx->key_sz * 2)) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
-    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
+    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, (c_ctx->key_sz + ctx->kdf_salt_sz) * 2)) { 
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, (c_ctx->key_sz * 2), c_ctx->key);
@@ -1016,7 +1019,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   int saved_flags;
   int saved_nChange;
   int saved_nTotalChange;
-  void (*saved_xTrace)(void*,const char*);
+  int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
@@ -1200,17 +1203,22 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz
 
 int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
   FILE *f;
-  if( strcmp(destination,"stdout")==0 ){
+  if(sqlite3StrICmp(destination, "stdout") == 0){
     f = stdout;
-  }else if( strcmp(destination, "stderr")==0 ){
+  }else if(sqlite3StrICmp(destination, "stderr") == 0){
     f = stderr;
-  }else if( strcmp(destination, "off")==0 ){
+  }else if(sqlite3StrICmp(destination, "off") == 0){
     f = 0;
   }else{
-    f = fopen(destination, "wb");
-    if( f==0 ){
-      return SQLITE_ERROR;
-    }
+#if defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT)
+    if(fopen_s(&f, destination, "a") != 0){
+#else
+    f = fopen(destination, "a");
+    if(f == 0){
+#endif    
+    return SQLITE_ERROR;
+  }	
+
   }
   sqlite3_profile(db, sqlcipher_profile_callback, f);
   return SQLITE_OK;
@@ -1219,11 +1227,15 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
 static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint64 run_time){
   FILE *f = (FILE*)file;
   double elapsed = run_time/1000000.0;
-  if( f ) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
+  if(f) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
 }
 
 int sqlcipher_codec_fips_status(codec_ctx *ctx) {
   return ctx->read_ctx->provider->fips_status(ctx->read_ctx);
+}
+
+const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->get_provider_version(ctx->read_ctx);
 }
 
 #endif

@@ -76,6 +76,7 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
 } 
 
 int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
+  char *pragma_cipher_deprecated_msg = "PRAGMA cipher command is deprecated, please remove from usage.";
   struct Db *pDb = &db->aDb[iDb];
   codec_ctx *ctx = NULL;
   int rc;
@@ -129,13 +130,21 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
                                               sqlcipher_codec_get_cipher_provider(ctx));
     }
   } else
+  if( sqlite3StrICmp(zLeft, "cipher_provider_version")==0 && !zRight){
+    if(ctx) { codec_vdbe_return_static_string(pParse, "cipher_provider_version",
+                                              sqlcipher_codec_get_provider_version(ctx));
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
   if( sqlite3StrICmp(zLeft, "cipher")==0 ){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+        rc = sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+        codec_vdbe_return_static_string(pParse, "cipher", pragma_cipher_deprecated_msg);
+        sqlite3_log(SQLITE_WARNING, pragma_cipher_deprecated_msg);
+        return rc;
       }else {
         codec_vdbe_return_static_string(pParse, "cipher",
           sqlcipher_codec_ctx_get_cipher(ctx, 2));
@@ -353,7 +362,11 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* point the internal codec argument against the contet to be prepared */
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, sqlite3BtreePager(pDb->pBt), fd, zKey, nKey);
 
-    if(rc != SQLITE_OK) return rc; /* initialization failed, do not attach potentially corrupted context */
+    if(rc != SQLITE_OK) {
+      /* initialization failed, do not attach potentially corrupted context */
+      sqlite3_mutex_leave(db->mutex);
+      return rc;
+    }
 
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
@@ -386,7 +399,7 @@ static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
   }
   for(db_index = 0; db_index < db->nDb; db_index++) {
     struct Db *pDb = &db->aDb[db_index];
-    if(strcmp(pDb->zName, zDb) == 0) {
+    if(strcmp(pDb->zDbSName, zDb) == 0) {
       return db_index;
     }
   }
@@ -593,7 +606,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   int saved_flags;        /* Saved value of the db->flags */
   int saved_nChange;      /* Saved value of db->nChange */
   int saved_nTotalChange; /* Saved value of db->nTotalChange */
-  void (*saved_xTrace)(void*,const char*);  /* Saved db->xTrace */
+  int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
   int rc = SQLITE_OK;     /* Return code from service routines */
   char *zSql = NULL;         /* SQL statements */
   char *pzErrMsg = NULL;

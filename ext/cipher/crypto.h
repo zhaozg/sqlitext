@@ -45,9 +45,9 @@
 
 #ifndef CIPHER_VERSION
 #ifdef SQLCIPHER_FIPS
-#define CIPHER_VERSION "3.3.1 FIPS"
+#define CIPHER_VERSION "3.4.1 FIPS"
 #else
-#define CIPHER_VERSION "3.3.1"
+#define CIPHER_VERSION "3.4.1"
 #endif
 #endif
 
@@ -150,6 +150,19 @@ static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
     } 
 }
 
+static int cipher_isHex(const unsigned char *hex, int sz){
+  int i;
+  for(i = 0; i < sz; i++) {
+    unsigned char c = hex[i];
+    if ((c < '0' || c > '9') &&
+        (c < 'A' || c > 'F') &&
+        (c < 'a' || c > 'f')) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* extensions defined in crypto_impl.c */
 typedef struct codec_ctx codec_ctx;
 
@@ -217,7 +230,7 @@ static int sqlcipher_codec_get_store_pass(codec_ctx *ctx);
 static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey);
 static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
 int sqlcipher_codec_fips_status(codec_ctx *ctx);
-
+const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx);
 #endif
 #endif
 /* END SQLCIPHER */
