@@ -16,3 +16,5 @@ build\sqlite build\safe.db < sql\error.sql
 if %errorlevel% EQU 1  echo 5. Pass, must fail to open and decrypt use oldkey after changekey
 
 del build\safe.db build\safe1.db
+
+build\sqlite < sql\sequence.sql
