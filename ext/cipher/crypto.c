@@ -1,10 +1,10 @@
-/* 
+/*
 ** SQLCipher
 ** http://sqlcipher.net
-** 
+**
 ** Copyright (c) 2008 - 2013, ZETETIC LLC
 ** All rights reserved.
-** 
+**
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions are met:
 **     * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 **     * Neither the name of the ZETETIC LLC nor the
 **       names of its contributors may be used to endorse or promote products
 **       derived from this software without specific prior written permission.
-** 
+**
 ** THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
 ** EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 ** WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -26,7 +26,7 @@
 ** ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 ** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-**  
+**
 */
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
@@ -48,15 +48,15 @@ static void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, c
 }
 
 static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ctx) {
-  int rc, page_sz, reserve_sz; 
+  int rc, page_sz, reserve_sz;
 
   page_sz = sqlcipher_codec_ctx_get_pagesize(ctx);
   reserve_sz = sqlcipher_codec_ctx_get_reservesize(ctx);
 
   sqlite3_mutex_enter(db->mutex);
-  db->nextPagesize = page_sz; 
+  db->nextPagesize = page_sz;
 
-  /* before forcing the page size we need to unset the BTS_PAGESIZE_FIXED flag, else  
+  /* before forcing the page size we need to unset the BTS_PAGESIZE_FIXED flag, else
      sqliteBtreeSetPageSize will block the change  */
   pDb->pBt->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED;
   CODEC_TRACE(("codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize() size=%d reserve=%d\n", page_sz, reserve_sz));
@@ -73,7 +73,7 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
     if(ctx) return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
   }
   return SQLITE_ERROR;
-} 
+}
 
 int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
   char *pragma_cipher_deprecated_msg = "PRAGMA cipher command is deprecated, please remove from usage.";
@@ -86,7 +86,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   }
 
   CODEC_TRACE(("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
-  
+
   if( sqlite3StrICmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
     if(ctx) {
       char *fips_mode_status = sqlite3_mprintf("%d", sqlcipher_codec_fips_status(ctx));
@@ -152,7 +152,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     }
   }else
   if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
-    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 1); // change write cipher only 
+    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 1); // change write cipher only
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_kdf_iter")==0 ){
     if( zRight ) {
@@ -166,7 +166,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "kdf_iter")==0 ){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
+        sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration
       } else {
         char *kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_kdf_iter(ctx, 2));
         codec_vdbe_return_static_string(pParse, "kdf_iter", kdf_iter);
@@ -177,7 +177,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
+        sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration
       } else {
         char *fast_kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_fast_kdf_iter(ctx, 2));
         codec_vdbe_return_static_string(pParse, "fast_kdf_iter", fast_kdf_iter);
@@ -285,7 +285,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 
 /*
  * sqlite3Codec can be called in multiple modes.
- * encrypt mode - expected to return a pointer to the 
+ * encrypt mode - expected to return a pointer to the
  *   encrypted data without altering pData.
  * decrypt mode - expected to return a pointer to pData, with
  *   the data decrypted in the input buffer
@@ -293,7 +293,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   codec_ctx *ctx = (codec_ctx *) iCtx;
   int offset = 0, rc = 0;
-  int page_sz = sqlcipher_codec_ctx_get_pagesize(ctx); 
+  int page_sz = sqlcipher_codec_ctx_get_pagesize(ctx);
   unsigned char *pData = (unsigned char *) data;
   void *buffer = sqlcipher_codec_ctx_get_data(ctx);
   void *kdf_salt = sqlcipher_codec_ctx_get_kdf_salt(ctx);
@@ -301,7 +301,7 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
-   sqlcipher_codec_ctx_set_error(ctx, rc); 
+   sqlcipher_codec_ctx_set_error(ctx, rc);
    return NULL;
   }
 
@@ -312,20 +312,20 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
     case 0: /* decrypt */
     case 2:
     case 3:
-      if(pgno == 1) memcpy(buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ); /* copy file header to the first 16 bytes of the page */ 
+      if(pgno == 1) memcpy(buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ); /* copy file header to the first 16 bytes of the page */
       rc = sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
       break;
     case 6: /* encrypt */
-      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
+      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */
       rc = sqlcipher_page_cipher(ctx, CIPHER_WRITE_CTX, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
     case 7:
-      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
+      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */
       rc = sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       return buffer; /* return persistent buffer data, pData remains intact */
@@ -339,7 +339,7 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 void sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
   if(pCodecArg == NULL) return;
-  sqlcipher_codec_ctx_free(&ctx); // wipe and free allocated memory for the context 
+  sqlcipher_codec_ctx_free(&ctx); // wipe and free allocated memory for the context
   sqlcipher_deactivate(); /* cleanup related structures, OpenSSL etc, when codec is detatched */
 }
 
@@ -374,13 +374,13 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     /* force secure delete. This has the benefit of wiping internal data when deleted
        and also ensures that all pages are written to disk (i.e. not skipped by
-       sqlite3PagerDontWrite optimizations) */ 
-    sqlite3BtreeSecureDelete(pDb->pBt, 1); 
+       sqlite3PagerDontWrite optimizations) */
+    sqlite3BtreeSecureDelete(pDb->pBt, 1);
 
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
-    if(fd != NULL) { 
+    if(fd != NULL) {
       sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
     sqlite3_mutex_leave(db->mutex);
@@ -416,7 +416,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
-    return sqlite3CodecAttach(db, db_index, pKey, nKey); 
+    return sqlite3CodecAttach(db, db_index, pKey, nKey);
   }
   return SQLITE_ERROR;
 }
@@ -450,9 +450,9 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       Pager *pPager = sqlite3BtreePager(pDb->pBt);
 
       ctx = sqlite3PagerGetCodec(sqlite3BtreePager(pDb->pBt));
-     
-      if(ctx == NULL) { 
-        /* there was no codec attached to this database, so this should do nothing! */ 
+
+      if(ctx == NULL) {
+        /* there was no codec attached to this database, so this should do nothing! */
         CODEC_TRACE(("sqlite3_rekey_v2: no codec attached to db, exiting\n"));
         return SQLITE_OK;
       }
@@ -460,12 +460,12 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       sqlite3_mutex_enter(db->mutex);
 
       codec_set_pass_key(db, db_index, pKey, nKey, CIPHER_WRITE_CTX);
-    
-      /* do stuff here to rewrite the database 
+
+      /* do stuff here to rewrite the database
       ** 1. Create a transaction on the database
       ** 2. Iterate through each page, reading it and then writing it.
       ** 3. If that goes ok then commit and put ctx->rekey into ctx->key
-      **    note: don't deallocate rekey since it may be used in a subsequent iteration 
+      **    note: don't deallocate rekey since it may be used in a subsequent iteration
       */
       rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
       sqlite3PagerPagecount(pPager, &page_count);
@@ -477,18 +477,18 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
             if(rc == SQLITE_OK) {
               sqlite3PagerUnref(page);
             } else {
-             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred writing page %d\n", rc, pgno));  
+             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred writing page %d\n", rc, pgno));
             }
           } else {
-             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred getting page %d\n", rc, pgno));  
+             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred getting page %d\n", rc, pgno));
           }
-        } 
+        }
       }
 
       /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
-      if(rc == SQLITE_OK) { 
+      if(rc == SQLITE_OK) {
         CODEC_TRACE(("sqlite3_rekey_v2: committing\n"));
-        rc = sqlite3BtreeCommit(pDb->pBt); 
+        rc = sqlite3BtreeCommit(pDb->pBt);
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
         CODEC_TRACE(("sqlite3_rekey_v2: rollback\n"));
@@ -526,10 +526,10 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
  * Implementation of an "export" function that allows a caller
  * to duplicate the main database to an attached database. This is intended
  * as a conveneince for users who need to:
- * 
+ *
  *   1. migrate from an non-encrypted database to an encrypted database
  *   2. move from an encrypted database to a non-encrypted database
- *   3. convert beween the various flavors of encrypted databases.  
+ *   3. convert beween the various flavors of encrypted databases.
  *
  * This implementation is based heavily on the procedure and code used
  * in vacuum.c, but is exposed as a function that allows export to any
@@ -539,7 +539,7 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
 /*
 ** Finalize a prepared statement.  If there was an error, store the
 ** text of the error message in *pzErrMsg.  Return the result code.
-** 
+**
 ** Based on vacuumFinalize from vacuum.c
 */
 static int sqlcipher_finalize(sqlite3 *db, sqlite3_stmt *pStmt, char **pzErrMsg){
@@ -553,7 +553,7 @@ static int sqlcipher_finalize(sqlite3 *db, sqlite3_stmt *pStmt, char **pzErrMsg)
 
 /*
 ** Execute zSql on database db. Return an error code.
-** 
+**
 ** Based on execSql from vacuum.c
 */
 static int sqlcipher_execSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
@@ -574,7 +574,7 @@ static int sqlcipher_execSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
 /*
 ** Execute zSql on database db. The statement returns exactly
 ** one column. Execute this as SQL on the same database.
-** 
+**
 ** Based on execExecSql from vacuum.c
 */
 static int sqlcipher_execExecSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
@@ -597,7 +597,7 @@ static int sqlcipher_execExecSql(sqlite3 *db, char **pzErrMsg, const char *zSql)
 
 /*
  * copy database and schema from the main database to an attached database
- * 
+ *
  * Based on sqlite3RunVacuum from vacuum.c
 */
 void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **argv) {
@@ -610,13 +610,14 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   int rc = SQLITE_OK;     /* Return code from service routines */
   char *zSql = NULL;         /* SQL statements */
   char *pzErrMsg = NULL;
-  
+
   saved_flags = db->flags;
   saved_nChange = db->nChange;
   saved_nTotalChange = db->nTotalChange;
   saved_xTrace = db->xTrace;
-  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
+  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks;
   db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
+  db->mDbFlags |= DBFLAG_PreferBuiltin;
   db->xTrace = 0;
 
   /* Query the schema of the main database. Create a mirror schema
@@ -627,7 +628,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "  FROM sqlite_master WHERE type='table' AND name!='sqlite_sequence'"
     "   AND rootpage>0"
   , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
@@ -635,7 +636,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "SELECT 'CREATE INDEX %s.' || substr(sql,14)"
     "  FROM sqlite_master WHERE sql LIKE 'CREATE INDEX %%' "
   , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
@@ -643,7 +644,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "SELECT 'CREATE UNIQUE INDEX %s.' || substr(sql,21) "
     "  FROM sqlite_master WHERE sql LIKE 'CREATE UNIQUE INDEX %%'"
   , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
@@ -658,7 +659,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "WHERE type = 'table' AND name!='sqlite_sequence' "
     "  AND rootpage>0"
   , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
@@ -668,7 +669,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "SELECT 'DELETE FROM %s.' || quote(name) || ';' "
     "FROM %s.sqlite_master WHERE name='sqlite_sequence' "
   , attachedDb, attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
@@ -677,7 +678,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "|| ' SELECT * FROM main.' || quote(name) || ';' "
     "FROM %s.sqlite_master WHERE name=='sqlite_sequence';"
   , attachedDb, attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
@@ -693,7 +694,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     "   WHERE type='view' OR type='trigger'"
     "      OR (type='table' AND rootpage=0)"
   , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execSql(db, &pzErrMsg, zSql); 
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execSql(db, &pzErrMsg, zSql);
   if( rc!=SQLITE_OK ) goto end_of_export;
   sqlite3_free(zSql);
 
