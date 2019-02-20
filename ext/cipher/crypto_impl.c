@@ -1354,14 +1354,9 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination)
   }
   else
   {
-#if defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT)
-    if(fopen_s(&f, destination, "a") != 0)
-    {
-#else
     f = fopen(destination, "a");
     if(f == 0)
     {
-#endif
       return SQLITE_ERROR;
     }
 
