@@ -32,3 +32,4 @@
 *.dSYM/
 /build/safe.db
 /build
+/bin
