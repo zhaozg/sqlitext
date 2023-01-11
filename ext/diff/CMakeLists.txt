@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0)
 project(sqlitediff C)
 
-add_definitions(-Wall)
+add_definitions(-Wall -std=c89)
 
 set(SRC patch.c
         patch.h
@@ -19,10 +19,5 @@ target_link_libraries(sqlitediff sqlite3)
 target_link_libraries(sqlite-diff sqlitediff)
 target_link_libraries(sqlite-patch sqlitediff)
 
-set_source_files_properties(${SRC} main-diff.c main-patch.c
-                            PROPERTIES COMPILE_FLAGS -std=c99)
-
 add_executable(sqldiff-test test.c)
-
-set_target_properties(sqldiff-test PROPERTIES COMPILE_FLAGS -std=c99)
 target_link_libraries(sqldiff-test sqlitediff sqlite3)

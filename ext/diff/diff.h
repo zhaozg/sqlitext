@@ -14,7 +14,7 @@ struct sqlite_value {
     int64_t iVal;
     double dVal;
   } data1;
-  const char *data2; //< Used for BLOB and TEXT
+  const char *data2; /*< Used for BLOB and TEXT */
 };
 
 struct TableInfo {
@@ -28,9 +28,9 @@ struct Instruction {
   struct TableInfo *table;
   uint8_t iType;
   struct sqlite_value
-      *values;  //< Array of values, old and new concatenated in UDPATE
-  int *valFlag; //< For UPDATE instrs, array of flags indicating whether the
-                // value has changed
+      *values;  /*< Array of values, old and new concatenated in UDPATE */
+  int *valFlag; /*< For UPDATE instrs, array of flags indicating whether the */
+                /* value has changed */
 };
 
 typedef int (*InstrCallback)(const struct Instruction *instr, void *context);
@@ -59,5 +59,5 @@ int sqlitediff_diff_file(const char *zDb1, const char *zDb2, const char *zTab,
                          const char *out);
 
 #ifdef __cplusplus
-} // end extern "C"
+} /* end extern "C" */
 #endif

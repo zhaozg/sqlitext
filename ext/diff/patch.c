@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <sqlite3.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
@@ -213,29 +214,45 @@ size_t readValue(const char *buf, struct sqlite_value *val) {
 }
 
 int bindValue(sqlite3_stmt *stmt, int col, const struct sqlite_value *val) {
+  int rv = SQLITE_INTERNAL;
   switch (val->type) {
   case SQLITE_INTEGER:
-    return sqlite3_bind_int64(stmt, col, val->data1.iVal);
+    rv = sqlite3_bind_int64(stmt, col, val->data1.iVal);
+    break;
   case SQLITE_FLOAT:
-    return sqlite3_bind_double(stmt, col, val->data1.dVal);
+    rv = sqlite3_bind_double(stmt, col, val->data1.dVal);
+    break;
   case SQLITE_TEXT:
-    return sqlite3_bind_text(stmt, col, val->data2, val->data1.iVal, NULL);
+    rv = sqlite3_bind_text(stmt, col, val->data2, val->data1.iVal, NULL);
+    break;
   case SQLITE_BLOB:
-    return sqlite3_bind_blob64(stmt, col, val->data2, val->data1.iVal, NULL);
+    rv = sqlite3_bind_blob64(stmt, col, val->data2, val->data1.iVal, NULL);
+    break;
   case SQLITE_NULL:
-    return sqlite3_bind_null(stmt, col);
-  default:
-    return SQLITE_INTERNAL;
+    rv = sqlite3_bind_null(stmt, col);
+    break;
+  default:;
   }
+  if (rv != SQLITE_OK) {
+    runtimeError("bindValue fail %s with returned %d\n", sqlite3_errstr(rv),
+                 rv);
+  }
+  return rv;
 }
 
 int bindValues_ncolumns(sqlite3_stmt *stmt, struct sqlite_value *values,
-                        uint8_t nCol) {
-  for (int i = 0; i < nCol; i++) {
-    int rc = bindValue(stmt, i + 1, &values[i]);
+                        uint8_t nCol, int skipNull) {
+  int i, n, rc;
+  for (i = 0, n = 1; i < nCol; i++) {
+    int isNull = values[i].type == SQLITE_NULL;
+    if (isNull && skipNull)
+      continue;
+
+    rc = bindValue(stmt, n, &values[i]);
     if (rc != SQLITE_OK) {
       return rc;
     }
+    n++;
   }
   return SQLITE_OK;
 }
@@ -243,6 +260,7 @@ int bindValues_ncolumns(sqlite3_stmt *stmt, struct sqlite_value *values,
 int applyInsert(sqlite3 *db, const struct Instruction *instr) {
   int rc;
   Str sql; /* SQL for the patch SQL query */
+  int i;
 
   int nCol = instr->table->nCol;
   const char *tableName = instr->table->tableName;
@@ -251,7 +269,7 @@ int applyInsert(sqlite3 *db, const struct Instruction *instr) {
 
   strPrintf(&sql, "INSERT INTO %s VALUES (", tableName);
 
-  for (int i = 0; i < nCol; i++) {
+  for (i = 0; i < nCol; i++) {
     if (i < nCol - 1)
       strPrintf(&sql, "?,");
     else
@@ -266,7 +284,7 @@ int applyInsert(sqlite3 *db, const struct Instruction *instr) {
     return rc;
   }
 
-  rc = bindValues_ncolumns(stmt, instr->values, nCol);
+  rc = bindValues_ncolumns(stmt, instr->values, nCol, 0);
   if (rc != SQLITE_OK) {
     return rc;
   }
@@ -307,6 +325,7 @@ static int getColumnNames(sqlite3 *db, const char *tableName, StrArray *ary) {
 int applyDelete(sqlite3 *db, const struct Instruction *instr) {
   int rc;
   Str sql; /* SQL for the patch SQL query */
+  int i;
   StrArray columnNames;
   uint8_t nCol = instr->table->nCol;
 
@@ -318,13 +337,15 @@ int applyDelete(sqlite3 *db, const struct Instruction *instr) {
 
   strInit(&sql);
 
-  strPrintf(&sql, "DELETE FROM %s WHERE ", instr->table->tableName);
+  strPrintf(&sql, "DELETE FROM %s WHERE", instr->table->tableName);
 
-  for (int i = 0; i < nCol; i++) {
+  for (i = 0; i < nCol; i++) {
+    int isNull = instr->values[i].type == SQLITE_NULL;
     if (i == 0)
-      strPrintf(&sql, "%s = ?", columnNames.s[i]);
+      strPrintf(&sql, isNull ? " %s IS NULL" : " %s = ?", columnNames.s[i]);
     else
-      strPrintf(&sql, "AND %s = ?", columnNames.s[i]);
+      strPrintf(&sql, isNull ? " AND %s IS NULL" : " AND %s = ?",
+                columnNames.s[i]);
   }
 
   rc = sqlite3_prepare_v2(db, sql.z, sql.nUsed, &stmt, NULL);
@@ -335,7 +356,7 @@ int applyDelete(sqlite3 *db, const struct Instruction *instr) {
     return rc;
   }
 
-  rc = bindValues_ncolumns(stmt, instr->values, nCol);
+  rc = bindValues_ncolumns(stmt, instr->values, nCol, 1);
   if (rc != SQLITE_OK) {
     runtimeError("Failed binding to DELETE statement: %s", sql);
     strArrayFinal(&columnNames);
@@ -358,6 +379,8 @@ int applyUpdate(sqlite3 *db, const struct Instruction *instr) {
   StrArray columnNames;
   sqlite3_stmt *stmt;
   int rc;
+  int i;
+  int n;
 
   struct sqlite_value *valsBefore = instr->values;
   struct sqlite_value *valsAfter = instr->values + nCol;
@@ -368,8 +391,8 @@ int applyUpdate(sqlite3 *db, const struct Instruction *instr) {
   rc = getColumnNames(db, instr->table->tableName, &columnNames);
   strPrintf(&sql, "UPDATE %s SET ", instr->table->tableName);
 
-  // sets
-  for (int n = 0, i = 0; i < nCol; i++) {
+  /* sets */
+  for (n = 0, i = 0; i < nCol; i++) {
     const struct sqlite_value val = valsAfter[i];
     if (val.type) {
       if (n == 0)
@@ -380,15 +403,17 @@ int applyUpdate(sqlite3 *db, const struct Instruction *instr) {
     }
   }
 
-  // wheres
+  /* wheres */
   strPrintf(&sql, " WHERE ");
-  for (int n = 0, i = 0; i < nCol; i++) {
+  for (n = 0, i = 0; i < nCol; i++) {
     const struct sqlite_value val = valsBefore[i];
+    int is_null = val.type == SQLITE_NULL;
     if (val.type) {
       if (n == 0)
-        strPrintf(&sql, "%s = ?", columnNames.s[i]);
+        strPrintf(&sql, is_null ? "%s IS NULL" : "%s = ?", columnNames.s[i]);
       else
-        strPrintf(&sql, " AND %s = ?", columnNames.s[i]);
+        strPrintf(&sql, is_null ? " AND %s IS NULL" : " AND %s = ?",
+                  columnNames.s[i]);
       n++;
     }
   }
@@ -401,8 +426,7 @@ int applyUpdate(sqlite3 *db, const struct Instruction *instr) {
     return 1;
   }
 
-  int n = 1;
-  for (int i = 0; i < nCol; i++) {
+  for (i = 0, n = 1; i < nCol; i++) {
     struct sqlite_value *val = &valsAfter[i];
     if (val->type) {
       if (bindValue(stmt, n, val)) {
@@ -413,9 +437,10 @@ int applyUpdate(sqlite3 *db, const struct Instruction *instr) {
     }
   }
 
-  for (int i = 0; i < nCol; i++) {
+  for (i = 0; i < nCol; i++) {
     struct sqlite_value *val = &valsBefore[i];
-    if (val->type) {
+    int is_null = val->type == SQLITE_NULL;
+    if (val->type && !is_null) {
       if (bindValue(stmt, n, val)) {
         strArrayFinal(&columnNames);
         return 1;
@@ -452,6 +477,7 @@ int applyInstructionCallback(const struct Instruction *instr, void *context) {
 }
 
 size_t readInstructionFromBuffer(const char *buf, struct Instruction *instr) {
+  int i;
   size_t nRead = 0;
 
   instr->iType = *buf;
@@ -463,7 +489,7 @@ size_t readInstructionFromBuffer(const char *buf, struct Instruction *instr) {
     nCol *= 2;
   }
 
-  for (int i = 0; i < nCol; i++) {
+  for (i = 0; i < nCol; i++) {
     struct sqlite_value *val_p = instr->values + i;
     size_t read = readValue(buf, val_p);
     if (read == 0) {
@@ -555,11 +581,12 @@ int sqlitediff_apply(const char *buf, size_t size, InstrCallback instr_callback,
 
   while (buf < bufEnd) {
     u32 nCol;
-    u8 varintLen;
+    u32 varintLen;
     int *PKs;
     const char *tableName;
     size_t tableNameLen;
     size_t instrRead = 0;
+    u32 i;
 
     struct TableInfo table;
     struct Instruction instr;
@@ -567,23 +594,23 @@ int sqlitediff_apply(const char *buf, size_t size, InstrCallback instr_callback,
     char op = buf[0];
     buf++;
 
-    // Read OP
+    /* Read OP */
     if (op != 'T') {
       return CHANGESET_CORRUPT;
     }
 
-    // Read number of columns
+    /* Read number of columns */
     varintLen = getVarint32((u8 *)buf, nCol);
     buf += varintLen;
 
-    // Read Primary Key flags
-    PKs = malloc(nCol * sizeof(u8));
-    for (u32 i = 0; i < nCol; i++) {
+    /* Read Primary Key flags */
+    PKs = malloc(nCol * sizeof(*PKs));
+    for (i = 0; i < nCol; i++) {
       PKs[i] = buf[i];
     }
     buf += nCol;
 
-    // Read table name
+    /* Read table name */
     tableName = buf;
     tableNameLen = strlen(tableName);
     buf += tableNameLen + 1;
@@ -591,7 +618,7 @@ int sqlitediff_apply(const char *buf, size_t size, InstrCallback instr_callback,
     instrRead = 0;
 
     table.PKs = PKs;
-    table.nCol = nCol;
+    table.nCol = (uint8_t)nCol;
     table.tableName = tableName;
 
     instr.table = &table;

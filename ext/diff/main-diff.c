@@ -11,23 +11,37 @@
     }                                                                          \
   } while (0)
 
+int trace_callback(unsigned trace, void *db, void *p, void *x) {
+  (void)trace;
+  (void)db;
+  (void)p;
+
+  if (trace == SQLITE_TRACE_STMT) {
+    fprintf(stderr, "{SQL} [%s]\n", (const char *)x);
+  }
+  return 0;
+}
+
 const char *usage = "Usage: sqlite-diff [db1] [db2]";
 
 int main(int argc, char const *argv[]) {
   const char *db1File;
   const char *db2File;
   char sql[1024];
+  int verbose = 0;
 
   int rc;
   sqlite3 *db;
 
-  if (argc != 3) {
+  if (argc < 3) {
     fprintf(stderr, "Wrong number of arguments\n%s\n", usage);
     return 1;
   }
 
   db1File = argv[1];
   db2File = argv[2];
+  if (argc == 4)
+    verbose = 1;
 
   rc = sqlite3_open_v2(db1File, &db, SQLITE_OPEN_READWRITE, NULL);
 
@@ -35,6 +49,9 @@ int main(int argc, char const *argv[]) {
     fprintf(stderr, "Could not open sqlite DB: %s\n", db1File);
     return 2;
   }
+
+  if (verbose)
+    sqlite3_trace_v2(db, SQLITE_TRACE_STMT, trace_callback, db);
 
   snprintf(sql, sizeof(sql), "ATTACH '%s' AS 'aux';", db2File);
   SQLOK(sqlite3_exec(db, sql, 0, 0, 0));

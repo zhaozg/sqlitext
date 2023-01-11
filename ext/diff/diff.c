@@ -487,7 +487,7 @@ static int changeset_one_table(const char *zTab, TableCallback tableCallback,
 
   if (g.fDebug) {
     printf("SQL for %s:\n%s\n", zId, sql.z);
-    // goto end_changeset_one_table;
+    /* goto end_changeset_one_table; */
   }
 
   struct TableInfo tableInfo;
@@ -521,13 +521,13 @@ static int changeset_one_table(const char *zTab, TableCallback tableCallback,
           instr.values[nCol + i].type = 0;
           k++;
         } else {
-          // write old value
+          /* write old value */
           sqlite3_value_to_sqlite_value(sqlite3_column_value(pStmt, k + 1),
                                         &instr.values[i]);
-          // write new value
+          /* write new value */
           sqlite3_value_to_sqlite_value(sqlite3_column_value(pStmt, k + 2),
                                         &instr.values[nCol + i]);
-          // write changed flag
+          /* write changed flag */
           instr.valFlag[i] = sqlite3_column_int(pStmt, k);
           k += 3;
         }

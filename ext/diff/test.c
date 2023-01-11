@@ -50,6 +50,7 @@ int main(int argc, char const *argv[]) {
   const char *aF = "a.sqlite";
   const char *bF = "b.sqlite";
   struct sqlite3 *db;
+  FILE *out;
 
   rc = remove(aF);
   if (rc) {
@@ -86,8 +87,8 @@ int main(int argc, char const *argv[]) {
 
   F(checkB(db, "aux"));
 
-  // Diff
-  FILE *out = fopen("out.diff", "wb");
+  /* Diff */
+  out = fopen("out.diff", "wb");
   F(sqlitediff_diff_prepared(db, NULL, out /* Output stream */
                              ));
   fclose(out);

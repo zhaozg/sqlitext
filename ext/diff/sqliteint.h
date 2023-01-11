@@ -6,8 +6,8 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include <sqlite3.h>
+#include <stdint.h>
 
 typedef uint32_t u32;
 typedef uint64_t u64;
@@ -23,8 +23,9 @@ sqlite3_int64 sessionGetI64(u8 *aRec);
 ** macros handle the common case without a procedure call, but then call
 ** the procedure for larger varints.
 */
-#define getVarint32(A,B)  \
-	(u8)((*(A)<(u8)0x80)?((B)=(u32)*(A)),1:sqlite3GetVarint32((A),(u32 *)&(B)))
+#define getVarint32(A, B)                                                      \
+  (u8)((*(A) < (u8)0x80) ? ((B) = (u32) * (A)),                                \
+       1                 : sqlite3GetVarint32((A), (u32 *)&(B)))
 
 #ifdef __cplusplus
 }
