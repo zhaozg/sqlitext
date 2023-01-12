@@ -61,6 +61,13 @@ static void strInit(Str *p) {
   p->nUsed = 0;
 }
 
+static void strFinal(Str *p) {
+  free(p->z);
+  p->z = NULL;
+  p->nAlloc = 0;
+  p->nUsed = 0;
+}
+
 /*
 ** Print an error message for an error that occurs at runtime, then
 ** abort the program.
@@ -95,7 +102,7 @@ static void strPrintf(Str *p, const char *zFormat, ...) {
       break;
     }
     p->nAlloc = p->nAlloc * 2 + 1000;
-    p->z = sqlite3_realloc(p->z, p->nAlloc);
+    p->z = realloc(p->z, p->nAlloc);
     if (p->z == 0)
       runtimeError("out of memory");
   }
@@ -391,6 +398,7 @@ static int changeset_one_table(const char *zTab, TableCallback tableCallback,
   int i, k;                 /* Loop counters */
   const char *zSep;         /* List separator */
   int rc = SQLITE_OK;
+  struct Instruction instr;
 
   /* Check that the schemas of the two tables match. Exit early otherwise. */
   checkSchemasMatch(zTab);
@@ -501,8 +509,8 @@ static int changeset_one_table(const char *zTab, TableCallback tableCallback,
   }
 
   pStmt = db_prepare("%s", sql.z);
+  strFinal(&sql);
 
-  struct Instruction instr;
   instr.table = &tableInfo;
   instr.values = malloc(sizeof(struct sqlite_value) * nCol * 2);
   instr.valFlag = malloc(sizeof(int) * nCol);
@@ -575,6 +583,7 @@ end_changeset_one_table:
     sqlite3_free(azCol[--nCol]);
   sqlite3_free(azCol);
   sqlite3_free(aiPk);
+  sqlite3_free(aiFlg);
   sqlite3_free(zId);
 
   return rc;

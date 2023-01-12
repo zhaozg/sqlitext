@@ -1,6 +1,7 @@
 #include "patch.h"
 #include "sqlite3.h"
 
+#if defined(SQLITE_TRACE_STMT)
 int trace_callback(unsigned trace, void *db, void *p, void *x) {
   (void)trace;
   (void)db;
@@ -11,6 +12,7 @@ int trace_callback(unsigned trace, void *db, void *p, void *x) {
   }
   return 0;
 }
+#endif
 
 const char *usage = "Usage: sqlite-patch [db] [patchfile]";
 
@@ -41,8 +43,11 @@ int main(int argc, char const *argv[]) {
     return 2;
   }
 
-  if (verbose)
+  if (verbose) {
+#if defined(SQLITE_TRACE_STMT)
     sqlite3_trace_v2(db, SQLITE_TRACE_STMT, trace_callback, db);
+#endif
+  }
 
   rc = sqlitediff_patch_file(db, patchFile);
 

@@ -1,5 +1,11 @@
+#if defined(__linux__) && defined(__GNUC__)
+#define _XOPEN_SOURCE 500
+#endif
 #include "diff.h"
 #include "sqlite3.h"
+
+#include <stdio.h>
+#include <string.h>
 
 #define SQLOK(X)                                                               \
   do {                                                                         \
@@ -11,6 +17,7 @@
     }                                                                          \
   } while (0)
 
+#ifdef SQLITE_TRACE_STMT
 int trace_callback(unsigned trace, void *db, void *p, void *x) {
   (void)trace;
   (void)db;
@@ -21,6 +28,7 @@ int trace_callback(unsigned trace, void *db, void *p, void *x) {
   }
   return 0;
 }
+#endif
 
 const char *usage = "Usage: sqlite-diff [db1] [db2]";
 
@@ -50,8 +58,11 @@ int main(int argc, char const *argv[]) {
     return 2;
   }
 
-  if (verbose)
+  if (verbose) {
+#ifdef SQLITE_TRACE_STMT
     sqlite3_trace_v2(db, SQLITE_TRACE_STMT, trace_callback, db);
+#endif
+  }
 
   snprintf(sql, sizeof(sql), "ATTACH '%s' AS 'aux';", db2File);
   SQLOK(sqlite3_exec(db, sql, 0, 0, 0));

@@ -1,3 +1,7 @@
+#if defined(__linux__) && defined(__GNUC__)
+#define _XOPEN_SOURCE 500
+#endif
+
 #include "diff.h"
 
 #include "sqliteint.h"
@@ -80,6 +84,13 @@ static void strInit(Str *p) {
   p->nUsed = 0;
 }
 
+static void strFinal(Str *p) {
+  free(p->z);
+  p->z = NULL;
+  p->nAlloc = 0;
+  p->nUsed = 0;
+}
+
 /*
 ** Print an error message for an error that occurs at runtime, then
 ** abort the program.
@@ -114,7 +125,7 @@ static void strPrintf(Str *p, const char *zFormat, ...) {
       break;
     }
     p->nAlloc = p->nAlloc * 2 + 1000;
-    p->z = sqlite3_realloc(p->z, p->nAlloc);
+    p->z = realloc(p->z, p->nAlloc);
     if (p->z == 0)
       runtimeError("out of memory");
   }
@@ -226,7 +237,11 @@ int bindValue(sqlite3_stmt *stmt, int col, const struct sqlite_value *val) {
     rv = sqlite3_bind_text(stmt, col, val->data2, val->data1.iVal, NULL);
     break;
   case SQLITE_BLOB:
+#if SQLITE_VERSION_NUMBER > 3020000
     rv = sqlite3_bind_blob64(stmt, col, val->data2, val->data1.iVal, NULL);
+#else
+    rv = sqlite3_bind_blob(stmt, col, val->data2, val->data1.iVal, NULL);
+#endif
     break;
   case SQLITE_NULL:
     rv = sqlite3_bind_null(stmt, col);
@@ -279,7 +294,7 @@ int applyInsert(sqlite3 *db, const struct Instruction *instr) {
 
   sqlite3_stmt *stmt;
   rc = sqlite3_prepare_v2(db, sql.z, sql.nUsed, &stmt, NULL);
-
+  strFinal(&sql);
   if (rc != SQLITE_OK) {
     return rc;
   }
@@ -310,6 +325,7 @@ static int getColumnNames(sqlite3 *db, const char *tableName, StrArray *ary) {
   strPrintf(&sql, "pragma table_info(%s);", tableName);
 
   rc = sqlite3_prepare_v2(db, sql.z, sql.nUsed, &stmt, NULL);
+  strFinal(&sql);
   if (rc != SQLITE_OK) {
     return rc;
   }
@@ -349,7 +365,7 @@ int applyDelete(sqlite3 *db, const struct Instruction *instr) {
   }
 
   rc = sqlite3_prepare_v2(db, sql.z, sql.nUsed, &stmt, NULL);
-
+  strFinal(&sql);
   if (rc != SQLITE_OK) {
     runtimeError("Failed preparing DELETE statement: %s", sql);
     strArrayFinal(&columnNames);
@@ -419,7 +435,7 @@ int applyUpdate(sqlite3 *db, const struct Instruction *instr) {
   }
 
   rc = sqlite3_prepare_v2(db, sql.z, sql.nUsed, &stmt, NULL);
-
+  strFinal(&sql);
   if (rc != SQLITE_OK) {
     runtimeError("applyUpdate: Failed preparing sql: %s", sql);
     strArrayFinal(&columnNames);
@@ -539,17 +555,20 @@ static int file_read(const char *filename, void *buffer, size_t *len) {
 
   if (buffer == NULL && len != NULL) {
     *len = size;
+    fclose(file);
     return 0;
   }
 
   if (*len < size) {
     runtimeError("file_read need %zd bytes buffer, but %zd", size, *len);
+    fclose(file);
     *len = size;
     return 1;
   }
 
   if (fread(buffer, 1, size, file) != size) {
     runtimeError("fread file(%s) error: %s", filename, strerror(ferror(file)));
+    fclose(file);
     return 1;
   }
   fclose(file);
