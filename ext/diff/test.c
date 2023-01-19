@@ -93,7 +93,9 @@ int main(int argc, char const *argv[]) {
                              ));
   fclose(out);
 
-  F(sqlitediff_patch_file(db, "out.diff"));
+  out = fopen("out.diff", "rb");
+  F(sqlitediff_apply_file(db, out));
+  fclose(out);
 
   F(checkB(db, "main"));
 

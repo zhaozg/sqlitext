@@ -3,12 +3,8 @@
 #include "diff.h"
 #include "sqlite3.h"
 
-int applyInstruction(const struct Instruction *instr, struct sqlite3 *db);
+int sqlitediff_apply(sqlite3 *db, const char *buf, size_t size);
+int sqlitediff_apply_file(sqlite3 *db, FILE *diff);
 
-int sqlitediff_apply(const char *buf, size_t size, InstrCallback instr_callback,
-                     void *context);
-int sqlitediff_apply_file(const char *filename, InstrCallback instr_callback,
-                          void *context);
-
-int sqlitediff_patch(struct sqlite3 *db, const char *buf, size_t size);
-int sqlitediff_patch_file(struct sqlite3 *db, const char *filename);
+int sqlitediff_patch(const char *dbFile, FILE *diff);
+int sqlitediff_patch_file(const char *dbFile, const char *diffFile);

@@ -4,78 +4,51 @@
 #include "diff.h"
 #include "sqlite3.h"
 
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define SQLOK(X)                                                               \
-  do {                                                                         \
-    rc = X;                                                                    \
-    if (rc != 0) {                                                             \
-      fprintf(stderr, "Error: %s returned %d\n", #X, rc);                      \
-      fprintf(stderr, "%s", sqlite3_errstr(rc));                               \
-      return rc;                                                               \
-    }                                                                          \
-  } while (0)
-
-#ifdef SQLITE_TRACE_STMT
-int trace_callback(unsigned trace, void *db, void *p, void *x) {
-  (void)trace;
-  (void)db;
-  (void)p;
-
-  if (trace == SQLITE_TRACE_STMT) {
-    fprintf(stderr, "{SQL} [%s]\n", (const char *)x);
-  }
-  return 0;
-}
-#endif
-
-const char *usage = "Usage: sqlite-diff [db1] [db2]";
+const char *usage =
+    "Usage: sqlite-diff [source file] [target file] [diff file]\n"
+    " source file:  source file to diff\n"
+    " target file:  target file to diff\n"
+    " diff file:    generate diff file, default will output to stdout\n";
 
 int main(int argc, char const *argv[]) {
   const char *db1File;
   const char *db2File;
-  char sql[1024];
-  int verbose = 0;
+  const char *diffFile = NULL;
+  FILE *out = NULL;
 
   int rc;
-  sqlite3 *db;
 
-  if (argc < 3) {
-    fprintf(stderr, "Wrong number of arguments\n%s\n", usage);
+  if (argc < 3 || argc > 4) {
+    fprintf(stderr, "need more paramaters\n\n%s\n", usage);
     return 1;
   }
 
   db1File = argv[1];
   db2File = argv[2];
   if (argc == 4)
-    verbose = 1;
+    diffFile = argv[3];
 
-  rc = sqlite3_open_v2(db1File, &db, SQLITE_OPEN_READWRITE, NULL);
+  if (diffFile) {
+    out = fopen(diffFile, "wb");
+    if (out == NULL) {
+      fprintf(stderr, "Could create sqlite3 diff file: %s, fail with %s\n",
+              db1File, strerror(errno));
+      return 1;
+    }
+  } else
+    out = stdout;
 
+  rc = sqlitediff_diff(db1File, db2File, NULL, out);
   if (rc != SQLITE_OK) {
-    fprintf(stderr, "Could not open sqlite DB: %s\n", db1File);
+    fprintf(stderr, "Could generate sqlite3 diff file %d(%s)\n", rc,
+            sqlite3_errstr(rc));
     return 2;
   }
-
-  if (verbose) {
-#ifdef SQLITE_TRACE_STMT
-    sqlite3_trace_v2(db, SQLITE_TRACE_STMT, trace_callback, db);
-#endif
-  }
-
-  snprintf(sql, sizeof(sql), "ATTACH '%s' AS 'aux';", db2File);
-  SQLOK(sqlite3_exec(db, sql, 0, 0, 0));
-
-  sqlitediff_diff_prepared(db, NULL, stdout);
-
-  if (rc != SQLITE_OK) {
-    fprintf(stderr, "Could not create changeset.\n");
-    sqlite3_close(db);
-    return 2;
-  }
-
-  sqlite3_close(db);
 
   return 0;
 }

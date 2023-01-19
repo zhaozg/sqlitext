@@ -19,6 +19,11 @@
 #define CHANGESET_INSTRUCTION_CORRUPT 3
 #define CHANGESET_CALLBACK_ERROR 4
 
+static int applyInstruction(const struct Instruction *instr,
+                            struct sqlite3 *db);
+static int sqlitediff_apply_inner(sqlite3 *context,
+                                  InstrCallback instr_callback, const char *buf,
+                                  size_t size);
 /**
 
 FORMAT of binary changeset (pseudo-grammar):
@@ -518,7 +523,7 @@ size_t readInstructionFromBuffer(const char *buf, struct Instruction *instr) {
   return nRead;
 }
 
-int sqlitediff_patch(sqlite3 *db, const char *buf, size_t size) {
+int sqlitediff_apply(sqlite3 *db, const char *buf, size_t size) {
   int rc;
 
   rc = sqlite3_exec(db, "SAVEPOINT changeset_apply", 0, 0, 0);
@@ -526,7 +531,7 @@ int sqlitediff_patch(sqlite3 *db, const char *buf, size_t size) {
     rc = sqlite3_exec(db, "PRAGMA defer_foreign_keys = 1", 0, 0, 0);
   }
 
-  rc = sqlitediff_apply(buf, size, applyInstructionCallback, db);
+  rc = sqlitediff_apply_inner(db, applyInstructionCallback, buf, size);
 
   if (rc) {
     runtimeError("Error occured.");
@@ -540,62 +545,9 @@ int sqlitediff_patch(sqlite3 *db, const char *buf, size_t size) {
   return rc;
 }
 
-static int file_read(const char *filename, void *buffer, size_t *len) {
-  FILE *file = fopen(filename, "rb");
-  size_t size;
-
-  if (file == NULL) {
-    runtimeError("fopen file(%s) error: %s", filename, strerror(errno));
-    return 1;
-  }
-
-  fseek(file, 0, SEEK_END);
-  size = ftell(file);
-  fseek(file, 0, SEEK_SET);
-
-  if (buffer == NULL && len != NULL) {
-    *len = size;
-    fclose(file);
-    return 0;
-  }
-
-  if (*len < size) {
-    runtimeError("file_read need %zd bytes buffer, but %zd", size, *len);
-    fclose(file);
-    *len = size;
-    return 1;
-  }
-
-  if (fread(buffer, 1, size, file) != size) {
-    runtimeError("fread file(%s) error: %s", filename, strerror(ferror(file)));
-    fclose(file);
-    return 1;
-  }
-  fclose(file);
-  *len = size;
-  return 0;
-}
-
-int sqlitediff_patch_file(sqlite3 *db, const char *filename) {
-  size_t size;
-
-  int rc = file_read(filename, NULL, &size);
-  if (rc == 0) {
-    char *buffer = malloc(size);
-    if (buffer == NULL) {
-      runtimeError("Out of memory");
-      return 1;
-    }
-    rc = file_read(filename, buffer, &size);
-    if (rc == 0)
-      rc = sqlitediff_patch(db, buffer, size);
-    free(buffer);
-  }
-  return rc;
-}
-
-int sqlitediff_apply(const char *buf, size_t size, InstrCallback instr_callback,
-                     void *context) {
+static int sqlitediff_apply_inner(sqlite3 *context,
+                                  InstrCallback instr_callback, const char *buf,
+                                  size_t size) {
   const char *const bufEnd = buf + size;
 
   while (buf < bufEnd) {
@@ -671,20 +623,78 @@ int sqlitediff_apply(const char *buf, size_t size, InstrCallback instr_callback,
   return 0;
 }
 
-int sqlitediff_apply_file(const char *filename, InstrCallback instr_callback,
-                          void *context) {
+static int file_read(FILE *file, void *buffer, size_t *len) {
   size_t size;
-  int rc = file_read(filename, NULL, &size);
+  if (file == NULL) {
+    runtimeError("invalid file: %s", strerror(errno));
+    return 1;
+  }
+
+  fseek(file, 0, SEEK_END);
+  size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  if (buffer == NULL && len != NULL) {
+    *len = size;
+    return 0;
+  }
+
+  if (*len < size) {
+    runtimeError("file_read need %zd bytes buffer, but %zd", size, *len);
+    *len = size;
+    return 1;
+  }
+
+  if (fread(buffer, 1, size, file) != size) {
+    runtimeError("fread file error: %s", strerror(ferror(file)));
+    return 1;
+  }
+  *len = size;
+  return 0;
+}
+
+int sqlitediff_apply_file(sqlite3 *db, FILE *diff) {
+  size_t size;
+  int rc;
+
+  rc = file_read(diff, NULL, &size);
   if (rc == 0) {
     char *buffer = malloc(size);
     if (buffer == NULL) {
       runtimeError("Out of memory");
       return 1;
     }
-    rc = file_read(filename, buffer, &size);
-    if (rc == 0)
-      rc = sqlitediff_apply(buffer, size, instr_callback, context);
+    rc = file_read(diff, buffer, &size);
+    if (rc == 0) {
+      rc = sqlitediff_apply(db, buffer, size);
+    }
     free(buffer);
   }
+  return rc;
+}
+
+int sqlitediff_patch(const char *dbFile, FILE *fin) {
+  int rc;
+  sqlite3 *db;
+
+  rc = sqlite3_open_v2(dbFile, &db, SQLITE_OPEN_READWRITE, NULL);
+  if (rc != SQLITE_OK) {
+    runtimeError("Could not open sqlite DB %s:%s", dbFile, sqlite3_errstr(rc));
+    return 3;
+  }
+
+  rc = sqlitediff_apply_file(db, fin);
+  sqlite3_close(db);
+  return rc;
+}
+
+int sqlitediff_patch_file(const char *dbFile, const char *diffFile) {
+  int rc = SQLITE_IOERR_READ;
+  FILE *file = fopen(diffFile, "rb");
+  if (file) {
+    rc = sqlitediff_patch(dbFile, file);
+    fclose(file);
+  } else
+    runtimeError("fopen (%s) fail: %s", diffFile, strerror(errno));
   return rc;
 }
