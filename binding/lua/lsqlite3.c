@@ -2472,5 +2472,10 @@ LUALIB_API int luaopen_lsqlite3(lua_State *L) {
     sqlite3_auto_extension((void(*)(void))sqlite3_vec_init);
 #endif
 
+#ifdef SQLITE_GRAPH_STATIC
+    int sqlite3_graphqlite_init(sqlite3*, char**, const sqlite3_api_routines*);
+    sqlite3_auto_extension((void(*)(void))sqlite3_graphqlite_init);
+#endif
+
     return 1;
 }

@@ -60,11 +60,11 @@ $(GRAPH):
 	$(CC) $(CFLAGS) -DGRAPHQLITE_EXTENSION \
 	-o $@ $(SOURCE) ext/graph/main.c ext/graph/extension.c -lz -lreadline
 
-lsqlite3.so: $(GRAPH_ALL_OBJS)
+lsqlite3.so: $(GRAPH_ALL_OBJS) ext/vector/sqlite-vec.c binding/lua/lsqlite3.c
 	$(CC) $(CFLAGS) -DSQLITE_VEC_STATIC -DSQLITE_CORE -DSQLITE_VEC_ENABLE_AVX \
 	-Isrc $(LUA_CFLAGS) $(LUA_LIBS) -mavx2 -shared -o lsqlite3.so \
 	$(SOURCE) ext/vector/sqlite-vec.c binding/lua/lsqlite3.c \
-	$(GRAPH_ALL_OBJS)
+	-DSQLITE_GRAPH_STATIC $(GRAPH_ALL_OBJS)
 
 install: lsqlite3.so
 	cp -a lsqlite3.so $(LUA_LIBDIR)
