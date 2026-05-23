@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "diagnostics": {
+    "globals": [
+      "describe", "it", "setup", "teardown",
+      "before_each", "after_each", "pending"
+    ],
+    "disable": [
+      "close-non-object"
+    ],
+    "groupFileStatus": {
+      "ambiguity": "Any",
+      "await": "Any",
+      "duplicate": "Any",
+      "global": "Any",
+      "luadoc": "Any",
+      "redefined": "Any",
+      "strict": "Any",
+      "type-check": "Any",
+      "unbalanced": "Any",
+      "unused": "Any"
+    },
+    "ignoredFiles": "Opened",
+    "libraryFiles": "Opened"
+  },
+  "runtime": {
+    "version": "LuaJIT",
+    "path": [
+      "db/?.lua",
+      "spec/?.lua"
+    ],
+    "pathStrict": true
+  },
+  "workspace": {
+    "maxPreload": 1600,
+    "preloadFileSize": 1000,
+    "checkThirdParty": false,
+    "library": [
+        "${3rd}/busted/library",
+        "${3rd}/luassert/library"
+    ]
+  },
+  "typeFormat": {
+    "config": {
+      "format_line": "false"
+    }
+  },
+  "type": {
+    "castNumberToInteger": false
+  },
+  "doc": {
+    "privateName": [
+      "_*"
+    ]
+  }
+}
