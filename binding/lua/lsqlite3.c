@@ -2429,6 +2429,22 @@ static int db_create_rebaser(lua_State *L) {
     return 1;
 }
 
+static int lrebaser_configure(lua_State *L) {
+    lrebaser *lreb = lsqlite_checkrebaser(L, 1);
+    const char *rebase = luaL_checkstring(L, 2);
+    int nRebase = lua_strlen(L, 2);
+    int rc;
+
+    /* Load a rebase log previously returned by db:apply_changeset() on this
+    ** or (typically) another node, so that this rebaser can rebase local
+    ** changesets that overlap with changes the peer has already applied. */
+    if ((rc = sqlite3rebaser_configure(lreb->reb, nRebase, (const void*)rebase)) != SQLITE_OK) {
+        return pusherr(L, rc);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 /* session/changeset callbacks */
 
 static int changeset_conflict_cb = LUA_NOREF;
@@ -2783,7 +2799,13 @@ static int db_apply_changeset(lua_State *L) {
 
     if (lreb) { // if rebaser is present
         rc = sqlite3rebaser_configure(lreb->reb, nRebase, pRebase);
-        if (rc == SQLITE_OK) lua_pushstring(L, pRebase);
+        if (rc == SQLITE_OK) {
+            /* rebase log is binary data - never lua_pushstring (NUL truncation) */
+            if (pRebase && nRebase > 0)
+                lua_pushlstring(L, pRebase, nRebase);
+            else
+                lua_pushliteral(L, "");
+        }
         sqlite3_free(pRebase);
         if (rc == SQLITE_OK) return 1;
         return pusherr(L, rc);
@@ -3240,6 +3262,7 @@ static const luaL_Reg seslib[] = {
 
 static const luaL_Reg reblib[] = {
     {"rebase",          lrebaser_rebase         },
+    {"configure",       lrebaser_configure      },
     {"delete",          lrebaser_delete         },
 
     {"__tostring",      lrebaser_tostring       },

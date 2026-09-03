@@ -736,6 +736,59 @@ describe("lsqlite3 session: rebaser", function()
     reb:delete()
     db:close()
   end)
+
+  it("exposes configure to load a rebase log produced elsewhere", function()
+    -- Full two-node converge scenario (see doc/lsqlite_session.md):
+    --   A updates a0->aM, B updates a0->aS concurrently. B applies A's
+    --   changeset and OMITs the conflict, producing rebase log R. A loads R
+    --   with reb:configure() and rebases B's later changeset so it applies
+    --   cleanly (aM->aS) instead of conflicting again.
+    local function row(db)
+      for a in db:urows("SELECT a FROM t WHERE id=1") do return a end
+    end
+    local A = M.new_db({ {1, "a0", "P"} })
+    local B = M.new_db({ {1, "a0", "P"} })
+
+    local csA = M.record(A, function(d) d:exec("UPDATE t SET a='aM' WHERE id=1") end)
+    local csB = M.record(B, function(d) d:exec("UPDATE t SET a='aS' WHERE id=1") end)
+
+    -- B applies A's changeset; conflict is OMIT'd (B keeps its own value)
+    -- and the conflict log is returned + configured into B's rebaser.
+    local rebB = B:create_rebaser()
+    local rebase_log, rc = B:apply_changeset(csA,
+      function() return 1 end,
+      function() return CHANGESET_OMIT end,
+      nil, rebB)
+    assert.is_equal("string", type(rebase_log), "rc=" .. tostring(rc))
+    assert.is_true(#rebase_log > 0)      -- real conflict resolution recorded
+    assert.is_equal("aS", row(B))        -- B kept its own edit
+
+    -- A ships the log to B (here simulated), loads it with configure() and
+    -- rebases B's pending changeset before applying it to A.
+    local rebA = A:create_rebaser()
+    assert.is_true(rebA:configure(rebase_log))
+    local rebased = rebA:rebase(csB)
+    assert.is_equal("string", type(rebased))
+    assert.is_true(A:apply_changeset(rebased))
+    assert.is_equal("aS", row(A))        -- A converged to B's value
+    assert.is_equal("aS", row(B))
+
+    rebA:delete()
+    rebB:delete()
+    A:close()
+    B:close()
+  end)
+
+  it("configure rejects an invalid rebase log buffer", function()
+    local db = M.new_db()
+    local reb = db:create_rebaser()
+    local ok, rc = reb:configure("not-a-rebase-log")
+    assert.is_nil(ok)
+    assert.is_number(rc)
+    assert.is_true(rc ~= 0)
+    reb:delete()
+    db:close()
+  end)
 end)
 
 -- ------------------------------------------------------------------
@@ -896,7 +949,7 @@ end)
 -- ------------------------------------------------------------------
 -- 10. two-way synchronization between two nodes (round-trip model)
 --
--- Mirrors the design in doc/lsqlite3-sync.md: each node records local edits
+-- Mirrors the design in doc/lsqlite_session.md: each node records local edits
 -- in a short-lived session, snapshots the changeset at sync time and then
 -- rebuilds its session for the next edit window. Remote changes are applied
 -- while no session is active, so they are never re-broadcast (no echo-back).
