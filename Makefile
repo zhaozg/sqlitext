@@ -62,6 +62,7 @@ $(GRAPH):
 
 lsqlite3.so: $(GRAPH_ALL_OBJS) ext/vector/sqlite-vec.c binding/lua/lsqlite3.c
 	$(CC) $(CFLAGS) -DSQLITE_VEC_STATIC -DSQLITE_CORE -DSQLITE_VEC_ENABLE_AVX \
+	-DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_PREUPDATE_HOOK \
 	-Isrc $(LUA_CFLAGS) $(LUA_LIBS) -mavx2 -shared -o lsqlite3.so \
 	$(SOURCE) ext/vector/sqlite-vec.c binding/lua/lsqlite3.c \
 	-DSQLITE_GRAPH_STATIC $(GRAPH_ALL_OBJS)
