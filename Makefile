@@ -34,7 +34,7 @@ GRAPH           := $(BIN_PATH)/$(GRAPH_NAME)
 LUA_VERSION	:= 5.1 #$(shell luajit -e "_,_,v=string.find(_VERSION,'Lua (.+)');print(v)")
 LUA_CFLAGS	?= $(shell $(PKG_CONFIG) $(LUA) --cflags)
 LUA_LIBS	?= $(shell $(PKG_CONFIG) $(LUA) --libs)
-LUA_LIBDIR	?= $(shell $(PKG_CONFIG) $(LUA) --variable=INSTALL_LMOD)
+LUA_LIBDIR	?= $(shell $(PKG_CONFIG) $(LUA) --variable=INSTALL_CMOD)
 
 
 default: makedir all
