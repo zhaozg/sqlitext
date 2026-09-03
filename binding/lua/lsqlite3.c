@@ -2234,10 +2234,15 @@ static int liter_finalize(lua_State *L) {
         if (!litr->collectable) {
             return pusherr(L, SQLITE_CORRUPT);
         }
-        if ((rc = sqlite3changeset_finalize(litr->itr)) != SQLITE_OK) {
+        /* NOTE: sqlite3changeset_finalize() always releases the iterator and
+        ** merely reports the error code accumulated during iteration, so the
+        ** handle must be cleared even on failure - otherwise __gc would call
+        ** sqlite3changeset_finalize() again on freed memory (double free). */
+        rc = sqlite3changeset_finalize(litr->itr);
+        litr->itr = NULL;
+        if (rc != SQLITE_OK) {
             return pusherr(L, rc);
         }
-        litr->itr = NULL;
     }
     lua_pushboolean(L, 1);
     return 1;
