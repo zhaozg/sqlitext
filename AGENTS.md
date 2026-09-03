@@ -13,8 +13,8 @@
 建议将测试文件放在 `test/` 目录下，命名以 `_spec.lua` 结尾，例如：
 
 ```
-project/
-├── test/
+./
+├── spec/
 │   ├── sqlite_basic_spec.lua
 │   ├── sqlite_ext_graphqlite_spec.lua
 │   └── helper.lua          # 公共辅助函数
@@ -102,7 +102,7 @@ end)
 busted
 
 # 指定文件
-busted test/xxx_spec.lua
+busted spec/xxx_spec.lua
 
 # 显式用 LuaJIT
 busted --lua=luajit
@@ -133,6 +133,7 @@ assert.is_not.equal(a, b)
 3. **Cypher 字符串转义**：单引号要写成 `''`（SQL 标准），示例中已用 `gsub` 处理。
 4. **JSON 结果**：`cypher()` 返回 JSON 字符串，建议用 `dkjson` 解析后再断言（若需要精确对比）。
 5. **不用直接跑 `luajit test.lua`**：必须用 `busted` 命令。
+6. 思考清楚后在动手开发。
 
 ## 8. AI 个性化建议（记住这些就够了）
 
