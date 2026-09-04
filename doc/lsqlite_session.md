@@ -372,12 +372,21 @@ reb:delete()                        -- 有 __gc，可交由 GC
 - 目标库开 `PRAGMA foreign_keys=ON` 时，变更顺序或孤儿行会触发
   `CHANGESET_FOREIGN_KEY` 冲突；多数同步实现选择 apply 期间临时
   `PRAGMA foreign_keys=OFF`，靠业务保证整体一致。
-- **回调是模块级单例**：绑定把当前 apply / session-attach 的回调函数与 udata 保存在
-  模块级引用里，同一时刻只有“最近一次注册”的一套生效，且要到下一次
-  `apply_changeset` / `ses:attach(fn)` 才被替换。因此：
-  - 不要在任意回调内部再调用 `apply_changeset`（内层会覆盖外层回调引用，行为未定义）；
-  - 多个 session 各自 `attach(fn)` 传不同过滤函数不会“并存”，过滤器是共享的；
-  - 注意闭包生命周期：最后一次注册的回调会一直被持有到下次 apply 或进程结束。
+- **`apply_changeset` 的回调是“每次调用独立”的（不是模块级单例）**：绑定把本次
+  apply 的 filter / conflict / udata 引用放进这一次调用的上下文里，经
+  `sqlite3changeset_apply_v2` 的 `pCtx` 传给回调，apply 返回后立即释放。因此：
+  - 多线程 / 多 Lua state 各自调用 `apply_changeset` 互不覆盖，线程安全；
+  - 允许在某个回调里再对**另一个连接**调用 `apply_changeset`，内外两套回调各自生效；
+  - 回调若抛出 Lua 错误，绑定**不会在 SQLite 帧内 longjmp**（那会把连接锁“焊死”）：
+    先把错误暂存，让 apply 干净 ABORT / 回滚、释放写锁，返回后再把错误抛给调用方。
+- **`ses:attach(fn)` 的过滤回调也是“每个 session 独立”的**：绑定把该 session 的
+  filter / udata 引用存进这个 session 自己的上下文，经 `sqlite3session_table_filter`
+  的 `pCtx` 传给 SQLite。因此多个 session 各自 `attach(fn)` 传不同过滤函数会“并存”，
+  互不覆盖；多线程 / 多 Lua state 下各自 session 也安全（不再有进程级共享引用）。
+  对同一 session 再次 `attach(fn)` 会替换它自己的旧过滤函数。
+- 闭包生命周期：`apply_changeset` 的回调在本次调用结束后即被释放；`ses:attach(fn)`
+  注册的回调会被该 session 持有，直到该 session 被 `delete()` / 被 GC 回收，或再次
+  `attach(fn)` 替换。
 
 ---
 

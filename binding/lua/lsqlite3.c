@@ -2447,72 +2447,170 @@ static int lrebaser_configure(lua_State *L) {
 
 /* session/changeset callbacks */
 
-static int changeset_conflict_cb = LUA_NOREF;
-static int changeset_filter_cb = LUA_NOREF;
-static int changeset_cb_udata = LUA_NOREF;
-static int session_filter_cb = LUA_NOREF;
-static int session_cb_udata = LUA_NOREF;
+/* Session object.  The Lua table-filter callback for ses:attach(fn) is
+** owned by the session itself - NOT by module globals.  It is handed to
+** SQLite as the pCtx of sqlite3session_table_filter(), so sessions created
+** on different threads / different Lua states never share (and therefore
+** never clobber) each other's filter callbacks. */
+typedef struct lsession {
+    sqlite3_session *ses; /* SQLite session handle */
+    sdb *db;              /* database this session is attached to */
+    int filter_cb;        /* registry ref of attach(fn); LUA_NOREF when none */
+    int filter_udata;     /* registry ref of filter udata; LUA_REFNIL when none */
+} lsession;
+
+/* Per-call context for db_apply_changeset().  Handed to the
+** sqlite3changeset_apply_v2() xFilter / xConflict callbacks through pCtx so
+** that concurrent applies from different threads / Lua states never share
+** (and therefore never clobber) each other's Lua callback references. */
+typedef struct lsqlite_changeset_apply {
+    lua_State *L;    /* Lua state the callbacks were registered on */
+    int filter_cb;   /* registry ref; LUA_NOREF when absent */
+    int conflict_cb; /* registry ref; LUA_NOREF when absent */
+    int udata;       /* registry ref; LUA_REFNIL when absent */
+    int failed;      /* set once a Lua callback fails */
+    int err_ref;     /* registry ref of the first error object */
+} lsqlite_changeset_apply;
+
+/* Remember a Lua error raised from inside a session callback without
+** unwinding (longjmp) through the SQLite session frames: while it runs,
+** sqlite3changeset_apply_v2() holds the connection mutex, is inside a
+** SAVEPOINT and owns the file write-lock, so jumping out here would leave
+** the database "half applied" and locked forever.  Instead the error object
+** is parked in the per-call ctx and re-raised by db_apply_changeset() once
+** apply_v2() has cleanly returned (and released its locks). */
+static void lsqlite_changeset_capture_error(
+        lsqlite_changeset_apply *ctx, lua_State *L
+) {
+    if (!ctx->failed) {
+        ctx->err_ref = luaL_ref(L, LUA_REGISTRYINDEX); /* pops error object */
+        ctx->failed = 1;
+    }
+    else {
+        lua_pop(L, 1); /* drop the extra copy, keep the first error */
+    }
+}
 
 static int db_changeset_conflict_callback(
-        void *user,               /* Copy of sixth arg to _apply_v2() */
+        void *pCtx,               /* lsqlite_changeset_apply* */
         int eConflict,            /* DATA, MISSING, CONFLICT, CONSTRAINT */
         sqlite3_changeset_iter *p /* Handle describing change and conflict */
 ) {
-    // return default code if no callback is provided
-    if (changeset_conflict_cb == LUA_NOREF) return SQLITE_CHANGESET_OMIT;
-    sdb *db = (sdb*)user;
-    lua_State *L = db->L;
-    int top = lua_gettop(L);
-    int result, isint;
+    lsqlite_changeset_apply *ctx = (lsqlite_changeset_apply*)pCtx;
+    lua_State *L = ctx->L;
+    int top, result, isint, rc;
     const char *zTab;
     int nCol, Op, bIndirect;
 
-    if (sqlite3changeset_op(p, &zTab, &nCol, &Op, &bIndirect) != LUA_OK) {
+    /* default behaviour: OMIT the conflicting change */
+    if (ctx->conflict_cb == LUA_NOREF) return SQLITE_CHANGESET_OMIT;
+    /* an earlier callback already failed: abort the whole apply cleanly */
+    if (ctx->failed) return SQLITE_CHANGESET_ABORT;
+
+    top = lua_gettop(L);
+
+    rc = sqlite3changeset_op(p, &zTab, &nCol, &Op, &bIndirect);
+    if (rc != LUA_OK) {
         lua_pushliteral(L, "invalid return from changeset iterator");
-        return lua_error(L);
+        lsqlite_changeset_capture_error(ctx, L);
+        lua_settop(L, top);
+        return SQLITE_CHANGESET_ABORT;
     }
 
-    lua_rawgeti(L, LUA_REGISTRYINDEX, changeset_conflict_cb); /* get callback */
-    lua_rawgeti(L, LUA_REGISTRYINDEX, changeset_cb_udata); /* get callback user data */
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->conflict_cb); /* get callback */
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->udata);       /* get user data */
     lua_pushinteger(L, eConflict);
     (void)lsqlite_makeiter(L, p, 0);
     lua_pushstring(L, zTab);
     lua_pushinteger(L, Op);
     lua_pushboolean(L, bIndirect);
 
-    if (lua_pcall(L, 6, 1, 0) != LUA_OK) return lua_error(L);
+    if (lua_pcall(L, 6, 1, 0) != LUA_OK) {
+        lsqlite_changeset_capture_error(ctx, L);
+        lua_settop(L, top);
+        return SQLITE_CHANGESET_ABORT;
+    }
 
     result = lua_tointegerx(L, -1, &isint); /* use result if there was no error */
     if (!isint) {
         lua_pushliteral(L, "non-integer returned from conflict callback");
-        return lua_error(L);
+        lsqlite_changeset_capture_error(ctx, L);
+        lua_settop(L, top);
+        return SQLITE_CHANGESET_ABORT;
     }
 
     lua_settop(L, top);
     return result;
 }
 
-static int db_filter_callback(
-        void *user,       /* Context */
-        const char *zTab, /* Table name */
-        int filter_cb,
-        int filter_udata
+static int db_changeset_filter_callback(
+        void *pCtx,      /* lsqlite_changeset_apply* */
+        const char *zTab /* Table name */
 ) {
-    // allow the table if no filter callback is provided
-    if (filter_cb == LUA_NOREF || filter_cb == LUA_REFNIL) return 1;
-    sdb *db = (sdb*)user;
-    lua_State *L = db->L;
-    int top = lua_gettop(L);
-    int result, isint;
+    lsqlite_changeset_apply *ctx = (lsqlite_changeset_apply*)pCtx;
+    lua_State *L = ctx->L;
+    int top, result, isint;
 
-    lua_rawgeti(L, LUA_REGISTRYINDEX, filter_cb); /* get callback */
+    /* allow the table if no filter callback is provided */
+    if (ctx->filter_cb == LUA_NOREF || ctx->filter_cb == LUA_REFNIL) return 1;
+    /* an earlier callback failed: skip the rest; error is re-raised later */
+    if (ctx->failed) return 0;
+
+    top = lua_gettop(L);
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->filter_cb); /* get callback */
     lua_pushstring(L, zTab);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, filter_udata); /* get callback user data */
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->udata);     /* get user data */
+
+    if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
+        lsqlite_changeset_capture_error(ctx, L);
+        lua_settop(L, top);
+        return 0;
+    }
+
+    /* allow 0/1 and false/true to be returned
+    ** returning 0/false skips the table */
+    result = lua_tointegerx(L, -1, &isint); /* use result if there was no error */
+    if (!isint && !lua_isboolean(L, -1)) {
+        lua_pushliteral(L, "non-integer and non-boolean returned from filter callback");
+        lsqlite_changeset_capture_error(ctx, L);
+        lua_settop(L, top);
+        return 0;
+    }
+    if (!isint) result = lua_toboolean(L, -1);
+
+    lua_settop(L, top);
+    return result;
+}
+
+/* Session table-filter callback.  pCtx is the lsession* registered by
+** lsession_attach() through sqlite3session_table_filter(), so each session
+** uses its OWN Lua filter refs (no module-level singletons).
+** Note: a Lua error inside the filter is propagated with lua_error(), the
+** same convention used by every other SQLite->Lua hook in this binding
+** (update/commit/rollback hooks).  It is only apply_changeset() that must
+** defer its callback errors, because SQLite is holding a write-lock there. */
+static int db_session_filter_callback(
+        void *pCtx,      /* lsession* (pCtx of sqlite3session_table_filter) */
+        const char *zTab /* Table name */
+) {
+    lsession *lses = (lsession*)pCtx;
+    lua_State *L = lses->db->L;
+    int top, result, isint;
+
+    /* allow the table if no filter callback is provided */
+    if (lses->filter_cb == LUA_NOREF || lses->filter_cb == LUA_REFNIL) return 1;
+
+    top = lua_gettop(L);
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lses->filter_cb);    /* get callback */
+    lua_pushstring(L, zTab);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lses->filter_udata); /* get callback user data */
 
     if (lua_pcall(L, 2, 1, 0) != LUA_OK) return lua_error(L);
 
-    // allow 0/1 and false/true to be returned
-    // returning 0/false skips the table
+    /* allow 0/1 and false/true to be returned
+    ** returning 0/false skips the table */
     result = lua_tointegerx(L, -1, &isint); /* use result if there was no error */
     if (!isint && !lua_isboolean(L, -1)) {
         lua_pushliteral(L, "non-integer and non-boolean returned from filter callback");
@@ -2524,30 +2622,11 @@ static int db_filter_callback(
     return result;
 }
 
-static int db_changeset_filter_callback(
-        void *user,      /* Copy of sixth arg to _apply_v2() */
-        const char *zTab /* Table name */
-) {
-    return db_filter_callback(user, zTab, changeset_filter_cb, changeset_cb_udata);
-}
-
-static int db_session_filter_callback(
-        void *user,      /* Copy of third arg to session_attach() */
-        const char *zTab /* Table name */
-) {
-    return db_filter_callback(user, zTab, session_filter_cb, session_cb_udata);
-}
-
 /*
 ** =======================================================
 ** Session functions
 ** =======================================================
 */
-
-typedef struct {
-    sqlite3_session *ses;
-    sdb *db; // keep track of the DB this session is for
-} lsession;
 
 static lsession *lsqlite_makesession(lua_State *L, sqlite3_session *ses, sdb *db) {
     lsession *lses = (lsession*)lua_newuserdata(L, sizeof(lsession));
@@ -2555,6 +2634,8 @@ static lsession *lsqlite_makesession(lua_State *L, sqlite3_session *ses, sdb *db
     lua_setmetatable(L, -2);
     lses->ses = ses;
     lses->db = db;
+    lses->filter_cb = LUA_NOREF;
+    lses->filter_udata = LUA_REFNIL;
     return lses;
 }
 
@@ -2578,17 +2659,18 @@ static int lsession_attach(lua_State *L) {
     if ((rc = sqlite3session_attach(lses->ses, zTab)) != SQLITE_OK) {
         return pusherr(L, rc);
     }
-    // allow to pass a filter callback,
-    // but only one shared for all sessions where this callback is used
+    // allow to pass a filter callback (owned by this session only).
+    // refs live in lses and are replaced on a repeated attach(fn).
     if (lua_type(L, 2) == LUA_TFUNCTION) {
-        // TBD: does this *also* need to be done in cleanupvm?
-        luaL_unref(L, LUA_REGISTRYINDEX, session_filter_cb);
-        luaL_unref(L, LUA_REGISTRYINDEX, session_cb_udata);
+        if (lses->filter_cb != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, lses->filter_cb);
+            luaL_unref(L, LUA_REGISTRYINDEX, lses->filter_udata);
+        }
         lua_settop(L, 3);  // add udata even if it's not provided
-        session_cb_udata = luaL_ref(L, LUA_REGISTRYINDEX);
-        session_filter_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+        lses->filter_udata = luaL_ref(L, LUA_REGISTRYINDEX);
+        lses->filter_cb = luaL_ref(L, LUA_REGISTRYINDEX);
         sqlite3session_table_filter(lses->ses,
-            db_session_filter_callback, lses->db);
+            db_session_filter_callback, lses);
     }
     lua_pushboolean(L, 1);
     return 1;
@@ -2658,8 +2740,14 @@ static int lsession_patchset(lua_State *L) {
 static int lsession_delete(lua_State *L) {
     lsession *lses = lsqlite_getsession(L, 1);
     if (lses->ses != NULL) {
-      sqlite3session_delete(lses->ses);
+      sqlite3session_delete(lses->ses); /* no more xFilter calls after this */
       lses->ses = NULL;
+      if (lses->filter_cb != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, lses->filter_cb);
+        luaL_unref(L, LUA_REGISTRYINDEX, lses->filter_udata);
+        lses->filter_cb = LUA_NOREF;
+        lses->filter_udata = LUA_REFNIL;
+      }
     }
     return 0;
 }
@@ -2753,19 +2841,16 @@ static int db_apply_changeset(lua_State *L) {
     void *pRebase;
     int nRebase;
     lrebaser *lreb = NULL;
+    lsqlite_changeset_apply ctx; /* per-call, thread-local callback state */
 
     // parameters: db, changeset[[, filter cb], conflict cb[, udata[, rebaser[, flags]]]]
 
-    // TBD: does this *also* need to be done in cleanupvm?
-    if (changeset_cb_udata != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, changeset_conflict_cb);
-        luaL_unref(L, LUA_REGISTRYINDEX, changeset_filter_cb);
-        luaL_unref(L, LUA_REGISTRYINDEX, changeset_cb_udata);
-
-        changeset_conflict_cb =
-        changeset_filter_cb =
-        changeset_cb_udata = LUA_NOREF;
-    }
+    ctx.L = L;
+    ctx.filter_cb = LUA_NOREF;
+    ctx.conflict_cb = LUA_NOREF;
+    ctx.udata = LUA_REFNIL;
+    ctx.failed = 0;
+    ctx.err_ref = LUA_NOREF;
 
     // check for conflict/filter callback type if provided
     if (top >= 3) {
@@ -2782,18 +2867,43 @@ static int db_apply_changeset(lua_State *L) {
     if (top >= 4) {  // two callback are guaranteed to be on the stack in this case
         // shorten stack or extend to set udata to `nil` if not provided
         lua_settop(L, 5);
-        changeset_cb_udata = luaL_ref(L, LUA_REGISTRYINDEX);
-        changeset_conflict_cb = luaL_ref(L, LUA_REGISTRYINDEX);
-        changeset_filter_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+        ctx.udata = luaL_ref(L, LUA_REGISTRYINDEX);
+        ctx.conflict_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+        ctx.filter_cb = luaL_ref(L, LUA_REGISTRYINDEX);
     }
 
+    // The callback references live in this per-call ctx, which is handed to
+    // sqlite3changeset_apply_v2() as its pCtx.  No process-wide globals are
+    // touched, so concurrent applies from other threads / Lua states cannot
+    // corrupt each other's conflict/filter callbacks (previous design used
+    // module-level statics, which made db_apply_changeset() deadlock under
+    // multithreaded use).
     rc = sqlite3changeset_apply_v2(db->db, nset, (void*)cset,
                                    db_changeset_filter_callback,
                                    db_changeset_conflict_callback,
-                                   db, // context
+                                   &ctx,   // context
                                    lreb ? &pRebase : 0,
                                    lreb ? &nRebase : 0,
                                    flags);
+
+    // release the per-call references (apply_v2() has returned, so no
+    // session callback can use them any more)
+    if (ctx.filter_cb != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, ctx.filter_cb);
+        luaL_unref(L, LUA_REGISTRYINDEX, ctx.conflict_cb);
+        luaL_unref(L, LUA_REGISTRYINDEX, ctx.udata);
+    }
+
+    // A Lua error raised inside a conflict/filter callback must NOT longjmp
+    // through the sqlite3changeset_apply_v2() frames (that would leave the
+    // connection locked / half applied).  The callbacks above let SQLite
+    // abort and roll back cleanly; we re-raise the stored Lua error here,
+    // where no SQLite frame is active.
+    if (ctx.failed) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ctx.err_ref); // push error object
+        luaL_unref(L, LUA_REGISTRYINDEX, ctx.err_ref);
+        return lua_error(L);
+    }
 
     if (rc != SQLITE_OK) return pusherr(L, sqlite3_errcode(db->db));
 
@@ -3257,6 +3367,7 @@ static const luaL_Reg seslib[] = {
     {"delete",          lsession_delete         },
 
     {"__tostring",      lsession_tostring       },
+    {"__gc",            lsession_delete         },
     {NULL, NULL}
 };
 
