@@ -112,6 +112,15 @@ struct sdb_func {
 struct sdb {
     /* associated lua state */
     lua_State *L;
+    /* registry ref that pins the lua_State owning db->L, so that sqlite->Lua
+       callbacks (busy handler, progress, update/commit/rollback hooks, ...)
+       never run against a collected coroutine. LuaJIT coroutines are plain
+       lua_State objects: if the db handle outlives the coroutine that opened
+       it (e.g. it was handed out and the coroutine was then collected), db->L
+       would dangle and the next callback would crash inside lua_rawgeti().
+       Holding this ref keeps the opening thread alive until the handle is
+       closed/collected. */
+    int state_ref;
     /* sqlite database handle */
     sqlite3 *db;
 
@@ -653,6 +662,7 @@ static sdb *newdb (lua_State *L) {
     db->db = NULL;  /* database handle is currently `closed' */
     db->func = NULL;
 
+    db->state_ref =
     db->busy_cb =
     db->busy_udata =
     db->wal_hook_cb =
@@ -671,7 +681,17 @@ static sdb *newdb (lua_State *L) {
 #endif
         LUA_NOREF;
 
+    /* Keep the lua_State that created this handle alive for as long as the
+       handle lives.  If the db is opened inside a LuaJIT coroutine and that
+       coroutine is later garbage-collected while the connection is still in
+       use, db->L would point at a freed thread and the very first sqlite ->
+       Lua callback (busy handler, ...) would crash.  Pinning the thread here
+       (and releasing it in cleanupdb) closes that hole. */
+    lua_pushthread(L);
+    db->state_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
     luaL_getmetatable(L, sqlite_meta);
+
     lua_setmetatable(L, -2);        /* set metatable */
 
     /* to keep track of 'open' virtual machines; make keys week */
@@ -716,7 +736,10 @@ static int cleanupdb(lua_State *L, sdb *db) {
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
 
-    /* 'free' all references */
+    /* 'free' all references; release the pinned owner thread last so no
+       callback can fire on a half-dismantled state while we unref. */
+    luaL_unref(L, LUA_REGISTRYINDEX, db->state_ref);
+    db->state_ref = LUA_NOREF;
     luaL_unref(L, LUA_REGISTRYINDEX, db->busy_cb);
     luaL_unref(L, LUA_REGISTRYINDEX, db->busy_udata);
     luaL_unref(L, LUA_REGISTRYINDEX, db->wal_hook_cb);
