@@ -18,9 +18,7 @@ ifeq ($(OS),Windows_NT)
 	GRAPH_NAME := $(addsuffix .exe,$(GRAPH_NAME))
 endif
 
-ifeq ($(OS),Darwin)
-	export PKG_CONFIG_PATH := /usr/local/lib/pkgconfig
-endif
+PKG_CONFIG_PATH ?= /usr/local/lib/pkgconfig
 
 SOURCE		:= amalgamation.c
 
@@ -33,9 +31,17 @@ GRAPH           := $(BIN_PATH)/$(GRAPH_NAME)
 #LuaJIT auto detect
 LUA_VERSION	:= 5.1 #$(shell luajit -e "_,_,v=string.find(_VERSION,'Lua (.+)');print(v)")
 LUA_CFLAGS	?= $(shell $(PKG_CONFIG) $(LUA) --cflags)
-LUA_LIBS	?= $(shell $(PKG_CONFIG) $(LUA) --libs)
-LUA_LIBDIR	?= $(shell $(PKG_CONFIG) $(LUA) --variable=INSTALL_CMOD)
-
+# Shared-object link flag for the Lua module.
+# On macOS `-shared` produces a dylib that must resolve the Lua symbols at link
+# time, which forces -lluajit; `-bundle -undefined dynamic_lookup` leaves them
+# unresolved until the module is dlopen()ed, which is what LuaRocks uses by
+# default. LuaRocks passes LIBFLAG explicitly (`luarocks make`), so the value
+# below is only the fallback for a plain `make`.
+ifeq ($(OS),Darwin)
+LIBFLAG		?= -bundle -undefined dynamic_lookup -all_load
+else
+LIBFLAG		?= -shared
+endif
 
 default: makedir all
 
@@ -63,7 +69,7 @@ $(GRAPH):
 lsqlite3.so: $(GRAPH_ALL_OBJS) ext/vector/sqlite-vec.c binding/lua/lsqlite3.c
 	$(CC) $(CFLAGS) -DSQLITE_VEC_STATIC -DSQLITE_CORE -DSQLITE_VEC_ENABLE_AVX \
 	-DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_PREUPDATE_HOOK \
-	-Isrc $(LUA_CFLAGS) $(LUA_LIBS) -mavx2 -shared -o lsqlite3.so \
+	-Isrc $(LUA_CFLAGS) $(LUA_LIBS) -mavx2 $(LIBFLAG) -o lsqlite3.so \
 	$(SOURCE) ext/vector/sqlite-vec.c binding/lua/lsqlite3.c \
 	-DSQLITE_GRAPH_STATIC $(GRAPH_ALL_OBJS)
 
@@ -77,6 +83,7 @@ makedir:
 
 .PHONY: all
 
+all: $(TARGET)
 all: $(TARGET) $(CONVERT) $(SECURE) $(VECTOR) lsqlite3.so
 
 clean:
