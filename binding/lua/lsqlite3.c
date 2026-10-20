@@ -3122,7 +3122,7 @@ static int lsqlite_newindex(lua_State *L) {
 
 #ifndef LSQLITE_VERSION
 /* should be defined in rockspec, but just in case... */
-#define LSQLITE_VERSION "unknown"
+#define LSQLITE_VERSION "0.9.7"
 #endif
 
 /* Version number of this library
